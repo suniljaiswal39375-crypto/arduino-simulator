@@ -4,6 +4,10 @@ export interface Pin {
   id: string;
   name: string;
   type: PinType;
+  /** Normalized component-space anchor. This is the source of truth. */
+  xPct: number;
+  yPct: number;
+  /** Legacy local coordinate retained for project-file compatibility. */
   position: { x: number; y: number };
   number?: number;
 }
@@ -222,6 +226,16 @@ export interface CustomComponentDraft {
   svg: string;
   pins: { id: string; name: string; type: PinType; x: number; y: number; number?: number }[];
   script: string;
+}
+
+export interface EnterpriseState {
+  environment: { temperatureC: number; ambientLux: number; pressureHpa: number };
+  toleranceDriftEnabled: boolean;
+  batteryHealth: Record<string, { terminalVoltage: number; chargePct: number; currentDrawMa: number; brownout?: boolean }>;
+  network: { mcuNodes: string[]; mqttBroker: { active: boolean; topics: Record<string, string> }; dashboardWidgets: { id: string; type: "gauge" | "switch" | "chart" | "color"; topic: string; value: unknown }[] };
+  diagnostics: { freeRtosTasks: { name: string; priority: number; state: string; stackWatermark: number }[]; codeCoverage: Record<number, number> };
+  sourcing: { mouserPartNumber: string; unitPrice: number; inStock: boolean }[];
+  is3dViewActive: boolean;
 }
 
 export interface ProState {

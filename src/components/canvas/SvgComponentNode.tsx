@@ -2,10 +2,12 @@
 
 import { useRef } from "react";
 import { getDef } from "@/lib/catalog";
-import { componentSize } from "@/lib/geometry";
+import { componentSize, pinLocal } from "@/lib/geometry";
 import type { Component, Pin } from "@/lib/types";
 import { resistorBands } from "@/lib/resistor";
 import { useWorkspace } from "@/lib/store";
+import { componentRegistry } from "@/lib/components/registry";
+import "@/lib/components/builtin";
 
 interface Props {
   component: Component;
@@ -24,7 +26,7 @@ export function SvgComponentNode({ component: c, selected, simulating, onSelect,
   const skipPins = c.type.startsWith("breadboard");
   return (
     <g
-      transform={`translate(${c.position.x} ${c.position.y}) rotate(${c.rotation})`}
+      transform={`translate(${c.position.x} ${c.position.y}) rotate(${c.rotation} ${width / 2} ${height / 2})`}
       onPointerDown={(e) => {
         if (e.button === 2) return;
         e.stopPropagation();
@@ -48,12 +50,15 @@ export function SvgComponentNode({ component: c, selected, simulating, onSelect,
       )}
       <Body c={c} width={width} height={height} simulating={simulating} />
       {!skipPins &&
-        c.pins.map((pin) => (
-          <g key={pin.id} transform={`translate(${pin.position.x} ${pin.position.y})`} onPointerDown={(e) => onPinDown(e, c, pin)}>
+        c.pins.map((pin) => {
+          const anchor = pinLocal(c, pin);
+          return (
+          <g key={pin.id} transform={`translate(${anchor.x} ${anchor.y})`} onPointerDown={(e) => onPinDown(e, c, pin)}>
             <circle r={6} fill={pin.type === "gnd" ? "#111827" : pin.type === "power" ? "#ef4444" : pin.type === "analog" ? "#eab308" : pin.type === "data" ? "#22c55e" : "#60a5fa"} stroke="#0b0e14" strokeWidth={1.5} />
             <circle r={2.4} fill="#fde68a" pointerEvents="none" />
           </g>
-        ))}
+          );
+        })}
       {def && !c.type.startsWith("arduino") && !c.type.startsWith("breadboard") && c.type !== "esp32-s3" && (
         <text x={width / 2} y={height + 12} textAnchor="middle" fontSize={10} fill="#94a3b8">
           {c.label}
@@ -130,9 +135,12 @@ function Body({ c, width, height, simulating }: { c: Component; width: number; h
       return <Dip c={c} />;
     case "ds1307":
       return <Rtc />;
-    default:
+    default: {
       if (c.type.startsWith("custom-")) return <Custom c={c} width={width} height={height} />;
+      const plugin = componentRegistry.get(c.type);
+      if (plugin) return <g data-component-plugin={plugin.id} dangerouslySetInnerHTML={{ __html: plugin.svgAsset }} />;
       return <rect width={width} height={height} rx={4} fill="#1e293b" stroke="#64748b" />;
+    }
   }
 }
 
@@ -202,10 +210,11 @@ function Breadboard({ c, width, height }: { c: Component; width: number; height:
       <rect x={8} y={height - 22} width={width - 16} height={18} fill="#dbeafe" />
       {c.pins.map((pin) => {
         const m = pin.id.match(/^(\d+)([a-j])$/);
-        return <circle key={pin.id} cx={pin.position.x} cy={pin.position.y} r={2.4} fill={m && Number(m[1]) % 2 === 0 ? "#94a3b8" : "#64748b"} />;
+        const anchor = pinLocal(c, pin);
+        return <circle key={pin.id} cx={anchor.x} cy={anchor.y} r={2.4} fill={m && Number(m[1]) % 2 === 0 ? "#94a3b8" : "#64748b"} />;
       })}
       {c.pins.filter((p) => p.id.startsWith("TP") || p.id.startsWith("TN") || p.id.startsWith("BP") || p.id.startsWith("BN")).map((pin) => (
-        <circle key={pin.id} cx={pin.position.x} cy={pin.position.y} r={2.6} fill={pin.id.startsWith("T") ? "#fca5a5" : "#93c5fd"} />
+        <circle key={pin.id} cx={pinLocal(c, pin).x} cy={pinLocal(c, pin).y} r={2.6} fill={pin.id.startsWith("T") ? "#fca5a5" : "#93c5fd"} />
       ))}
       <text x={0} y={height / 2 - 6} width={width} textAnchor="middle" fontSize={9} fill="#94a3b8">
         {c.type === "breadboard-full" ? "FULL BREADBOARD · 0.1\"" : "HALF BREADBOARD · 0.1\""}

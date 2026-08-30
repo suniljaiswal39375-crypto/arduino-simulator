@@ -243,20 +243,55 @@ export function compileInWorker(source: string): Promise<CompileResult> {
 /* Intel HEX <-> Uint8Array                                            */
 /* ------------------------------------------------------------------ */
 
-export function hexToBinary(hex: string): Uint8Array {
-  const bytes: number[] = [];
-  for (const line of hex.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith(":")) continue;
-    const len = parseInt(trimmed.slice(1, 3), 16);
-    const type = parseInt(trimmed.slice(7, 9), 16);
-    if (type !== 0 && type !== 1 && type !== 4) continue;
-    for (let i = 0; i < Math.min(len, (trimmed.length - 9) / 2); i++) {
-      bytes.push(parseInt(trimmed.slice(9 + i * 2, 11 + i * 2), 16));
+export function parseHex(hex: string, maxBytes = 1024 * 1024): Uint8Array {
+  const memory = new Map<number, number>();
+  let upperAddress = 0;
+  let eof = false;
+  let lineNumber = 0;
+
+  for (const sourceLine of hex.split(/\r?\n/)) {
+    lineNumber++;
+    const line = sourceLine.trim();
+    if (!line) continue;
+    if (eof) throw new Error(`Intel HEX line ${lineNumber}: data after EOF record`);
+    if (!/^:[0-9a-fA-F]+$/.test(line) || line.length < 11 || line.length % 2 === 0) {
+      throw new Error(`Intel HEX line ${lineNumber}: malformed record`);
+    }
+    const record = Uint8Array.from(line.slice(1).match(/../g)!.map((v) => Number.parseInt(v, 16)));
+    const length = record[0];
+    if (record.length !== length + 5) throw new Error(`Intel HEX line ${lineNumber}: byte count mismatch`);
+    if ((record.reduce((sum, byte) => sum + byte, 0) & 0xff) !== 0) throw new Error(`Intel HEX line ${lineNumber}: checksum mismatch`);
+    const address = (record[1] << 8) | record[2];
+    const type = record[3];
+    const data = record.subarray(4, 4 + length);
+    if (type === 0x00) {
+      for (let i = 0; i < data.length; i++) {
+        const absolute = upperAddress + address + i;
+        if (absolute >= maxBytes) throw new Error(`Intel HEX exceeds ${maxBytes} byte flash limit`);
+        memory.set(absolute, data[i]);
+      }
+    } else if (type === 0x01) {
+      if (length !== 0) throw new Error(`Intel HEX line ${lineNumber}: invalid EOF`);
+      eof = true;
+    } else if (type === 0x02) {
+      if (length !== 2) throw new Error(`Intel HEX line ${lineNumber}: invalid segment address`);
+      upperAddress = ((data[0] << 8) | data[1]) << 4;
+    } else if (type === 0x04) {
+      if (length !== 2) throw new Error(`Intel HEX line ${lineNumber}: invalid linear address`);
+      upperAddress = ((data[0] << 8) | data[1]) << 16;
+    } else if (type !== 0x03 && type !== 0x05) {
+      throw new Error(`Intel HEX line ${lineNumber}: unsupported record type 0x${type.toString(16)}`);
     }
   }
-  return Uint8Array.from(bytes);
+  if (!eof) throw new Error("Intel HEX: missing EOF record");
+  const highest = memory.size ? Math.max(...memory.keys()) : -1;
+  const bytes = new Uint8Array(highest + 1);
+  bytes.fill(0xff);
+  for (const [address, value] of memory) bytes[address] = value;
+  return bytes;
 }
+
+export const hexToBinary = parseHex;
 
 export function hexToFlashWords(hex: string): Uint16Array {
   const bytes = hexToBinary(hex);
