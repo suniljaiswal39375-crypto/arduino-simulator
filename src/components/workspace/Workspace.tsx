@@ -9,6 +9,7 @@ import { Copilot } from "@/components/ai/Copilot";
 import { BottomPanel } from "@/components/simulation/BottomPanel";
 import { BOMView } from "@/components/bom/BOMView";
 import { SchematicView } from "@/components/schematic/SchematicView";
+import { ProPanel } from "@/components/pro/ProPanel";
 import { X } from "lucide-react";
 
 const CodeEditor = dynamic(
@@ -17,12 +18,12 @@ const CodeEditor = dynamic(
 );
 
 const CircuitCanvas = dynamic(
-  () => import("@/components/canvas/CircuitCanvas").then((m) => m.CircuitCanvas),
+  () => import("@/components/canvas/SvgCircuitCanvas").then((m) => m.SvgCircuitCanvas),
   {
     ssr: false,
     loading: () => (
       <div className="flex h-full items-center justify-center text-[12px] text-slate-500">
-        Loading canvas engine…
+        Loading SVG canvas engine…
       </div>
     ),
   }
@@ -79,7 +80,7 @@ export function Workspace() {
         />
         <aside className="flex shrink-0 flex-col border-l border-white/5 bg-[#10141c]" style={{ width: right }}>
           <div className="flex border-b border-white/5">
-            {(["properties", "ai"] as const).map((t) => (
+            {(["properties", "ai", "pro"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => useWorkspace.getState().setInspectorTab(t)}
@@ -87,12 +88,12 @@ export function Workspace() {
                   inspectorTab === t ? "border-b-2 border-cyan-400 text-white" : "text-slate-400"
                 }`}
               >
-                {t === "properties" ? "Properties" : "AI Copilot"}
+                {t === "properties" ? "Properties" : t === "ai" ? "AI Copilot" : "Pro Lab"}
               </button>
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
-            {inspectorTab === "properties" ? <PropertiesInspector /> : <Copilot />}
+            {inspectorTab === "properties" ? <PropertiesInspector /> : inspectorTab === "ai" ? <Copilot /> : <ProPanel />}
           </div>
         </aside>
       </div>

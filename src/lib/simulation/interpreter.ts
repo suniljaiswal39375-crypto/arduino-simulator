@@ -1,8 +1,12 @@
 /**
- * Transpiles a subset of Arduino C++ into async JavaScript and runs it
- * against a virtual board API. Used as the default in-browser firmware
- * engine (AVR8js hex execution is available when a compiled image is provided).
+ * Safe in-browser Arduino runtime.
+ *
+ * The C++ source is converted to a benign async JS program by the compilation
+ * pipeline in `compiler.ts`. In the default engine the generated code runs on
+ * the main thread against a virtual BoardAPI; the code is never raw C++.
  */
+
+import { compileSketch, CONSTANTS, transpileArduino } from "../compiler";
 
 export interface BoardAPI {
   pinMode: (pin: number, mode: number) => void;
@@ -25,79 +29,32 @@ export interface BoardAPI {
   dhtHumidity: () => number;
   pulseIn: (pin: number, value: number) => number;
   shouldStop: () => boolean;
+
+  // VoltCraft AI Pro protocol/hardware extensions
+  i2cBegin?: () => void;
+  i2cBeginTransmission?: (address: number) => void;
+  i2cWrite?: (value: number) => void;
+  i2cEndTransmission?: () => number;
+  i2cRead?: (address: number) => number;
+  spiBegin?: () => void;
+  spiTransfer?: (value: number) => number;
+  neopixelShow?: (bus: string) => void;
+  neopixelSetPixelColor?: (bus: string, index: number, r: number, g: number, b: number, a: number) => void;
+  neopixelClear?: (bus: string) => void;
+  wifiBegin?: () => void;
+  wifiConnect?: (ssid: string, pass: string) => number;
+  mqttConnect?: () => number;
+  mqttPublish?: (topic: string, payload: string) => number;
+  bleBegin?: () => void;
+  bleAdvertise?: (name: string, payload: string) => void;
 }
 
-const CONSTANTS = `
-const HIGH = 1, LOW = 0, INPUT = 0, OUTPUT = 1, INPUT_PULLUP = 2;
-const LED_BUILTIN = 13;
-const A0 = 14, A1 = 15, A2 = 16, A3 = 17, A4 = 18, A5 = 19;
-const A6 = 20, A7 = 21, A8 = 22, A9 = 23, A10 = 24, A11 = 25;
-function map(x, in_min, in_max, out_min, out_max) {
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-function constrain(x, a, b) { return Math.min(b, Math.max(a, x)); }
-function min(a,b){ return Math.min(a,b); }
-function max(a,b){ return Math.max(a,b); }
-function abs(a){ return Math.abs(a); }
-function pow(a,b){ return Math.pow(a,b); }
-function sqrt(a){ return Math.sqrt(a); }
-function sin(a){ return Math.sin(a); }
-function cos(a){ return Math.cos(a); }
-function random(a,b){ if (b===undefined) return Math.floor(Math.random()*a); return Math.floor(Math.random()*(b-a)+a); }
-function bitRead(v,n){ return (v>>n)&1; }
-function bitSet(v,n){ return v | (1<<n); }
-function bitClear(v,n){ return v & ~(1<<n); }
-function bitWrite(v,n,b){ return b ? bitSet(v,n) : bitClear(v,n); }
-function lowByte(v){ return v & 0xff; }
-function highByte(v){ return (v>>8)&0xff; }
-`;
-
-export function transpileArduino(source: string): string {
-  let s = source;
-  s = s.replace(/\/\*[\s\S]*?\*\//g, "");
-  s = s.replace(/\/\/.*$/gm, "");
-  const defines: Record<string, string> = {};
-  s = s.replace(/#define\s+(\w+)\s+(.+)$/gm, (_, n, v) => {
-    defines[n] = v.trim();
-    return "";
-  });
-  s = s.replace(/#include\s*[<"].*[>"].*$/gm, "");
-  s = s.replace(/#pragma.*$/gm, "");
-  s = s.replace(/using\s+namespace\s+\w+\s*;/g, "");
-  for (const [k, v] of Object.entries(defines)) {
-    s = s.replace(new RegExp(`\\b${k}\\b`, "g"), v);
-  }
-
-  const servos: string[] = [];
-  s = s.replace(/\bServo\s+(\w+)\s*;/g, (_, n) => {
-    servos.push(n);
-    return `const ${n} = __servo('${n}');`;
-  });
-  s = s.replace(/LiquidCrystal_I2C\s+(\w+)\s*\([^)]*\)\s*;/g, (_, n) => `const ${n} = __lcd;`);
-  s = s.replace(/LiquidCrystal\s+(\w+)\s*\([^)]*\)\s*;/g, (_, n) => `const ${n} = __lcd;`);
-  s = s.replace(/DHT\s+(\w+)\s*\([^)]*\)\s*;/g, (_, n) => `const ${n} = __dht;`);
-  s = s.replace(/Adafruit_SSD1306\s+(\w+)\s*\([^)]*\)\s*;/g, (_, n) => `const ${n} = __lcd;`);
-
-  s = s.replace(/\b(unsigned\s+)?(long|int|short|byte|char|float|double|bool|boolean|size_t|uint8_t|uint16_t|uint32_t|int8_t|int16_t|int32_t|word|String)\s+/g, "let ");
-  s = s.replace(/\bconst\s+let\s+/g, "const ");
-  s = s.replace(/\bstatic\s+let\s+/g, "let ");
-  s = s.replace(/\bvolatile\s+let\s+/g, "let ");
-  s = s.replace(/\bvoid\s+setup\s*\(\s*\)/g, "async function setup");
-  s = s.replace(/\bvoid\s+loop\s*\(\s*\)/g, "async function loop");
-  s = s.replace(/\bvoid\s+(\w+)\s*\(/g, "async function $1(");
-  s = s.replace(/\blet\s+(\w+)\s*\(/g, "async function $1(");
-  s = s.replace(/\bfor\s*\(\s*let\s+/g, "for (let ");
-  s = s.replace(/\bdelay\s*\(/g, "await delay(");
-  s = s.replace(/\bdelayMicroseconds\s*\(/g, "await delayMicroseconds(");
-  s = s.replace(/\btrue\b/g, "true");
-  s = s.replace(/\bfalse\b/g, "false");
-  s = s.replace(/\bString\s*\(/g, "String(");
-
-  return s;
-}
+export { CONSTANTS, transpileArduino, compileSketch };
 
 export async function runSketch(source: string, api: BoardAPI): Promise<void> {
-  const body = transpileArduino(source);
+  const compiled = compileSketch(source);
+  if (!compiled.ok) throw new Error(compiled.error ?? "Compilation failed");
+  const body = compiled.code;
   const prelude = `
 ${CONSTANTS}
 const pinMode = __api.pinMode;
@@ -138,7 +95,53 @@ const __dht = {
   readHumidity: () => __api.dhtHumidity(),
   read: () => true,
 };
-const Wire = { begin: () => {}, beginTransmission: () => {}, write: () => {}, endTransmission: () => 0, requestFrom: () => 0 };
+const Wire = {
+  begin: () => { if (__api.i2cBegin) __api.i2cBegin(); },
+  beginTransmission: (addr) => { if (__api.i2cBeginTransmission) __api.i2cBeginTransmission(addr); },
+  write: (v) => { if (__api.i2cWrite) __api.i2cWrite(v); },
+  endTransmission: () => (__api.i2cEndTransmission ? __api.i2cEndTransmission() : 0),
+  requestFrom: (addr, count) => {
+    if (!__api.i2cRead) return 0;
+    for (let i = 0; i < count; i++) __api.i2cRead(addr);
+    return count;
+  },
+};
+const SPI = {
+  begin: () => { if (__api.spiBegin) __api.spiBegin(); },
+  transfer: (v) => (__api.spiTransfer ? __api.spiTransfer(v) : v),
+  end: () => {},
+};
+const WiFi = {
+  begin: () => { if (__api.wifiBegin) __api.wifiBegin(); },
+  status: () => (__api.wifiConnect ? 3 : 0),
+  connect: (ssid, pass) => (__api.wifiConnect ? __api.wifiConnect(ssid, pass) : 3),
+  localIP: () => '192.168.4.1',
+};
+const PubSubClient = function () {
+  return {
+    setServer: () => {},
+    connect: () => (__api.mqttConnect ? __api.mqttConnect() : 1),
+    publish: (t, p) => (__api.mqttPublish ? __api.mqttPublish(t, p) : 1),
+    subscribe: () => true,
+    loop: () => {},
+  };
+};
+const BLE = {
+  begin: () => { if (__api.bleBegin) __api.bleBegin(); },
+  advertise: (name, payload) => { if (__api.bleAdvertise) __api.bleAdvertise(name, payload); },
+};
+const __neo = (id, n, pin) => ({
+  begin: () => {},
+  show: () => __api.neopixelShow && __api.neopixelShow('pixels_id_' + id + '_0'),
+  setPixelColor: (i, r, g, b, a) => { if (__api.neopixelSetPixelColor) __api.neopixelSetPixelColor('pixels_id_' + id + '_0', i, r, g, b, a ?? 0); },
+  clear: () => { if (__api.neopixelClear) __api.neopixelClear('pixels_id_' + id + '_0'); },
+});
+const Adafruit_NeoPixel = function (n, pin, type) { return __neo('id' + Math.random().toString(36).slice(2), n, pin); };
+const FastLED = {
+  addLeds: () => ({ show: () => {} }),
+  setPixelColor: (i, r, g, b) => { if (__api.neopixelSetPixelColor) __api.neopixelSetPixelColor('fastled', i, r, g, b, 0); },
+  show: () => { if (__api.neopixelShow) __api.neopixelShow('fastled'); },
+};
 `;
 
   const runner = `

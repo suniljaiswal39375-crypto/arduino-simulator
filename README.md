@@ -1,16 +1,31 @@
-# VoltCraft AI
+# VoltCraft AI Pro
 
-Web-based Arduino & circuit design studio: visual breadboard, IEEE-style schematic, Monaco IDE, in-browser firmware simulation, serial tools, and an AI wiring copilot.
+Web-based Arduino & circuit design studio: high-DPI SVG visual breadboard, IEEE-style schematic, Monaco IDE, in-browser AVR firmware simulation, protocol analyzers, fault injection, thermal simulation, Web Audio sound synthesis, and an AI copilot.
 
 ## Stack
 
 - Next.js App Router + React 19 + TypeScript
 - Tailwind CSS (dark IDE theme)
-- Konva / react-konva canvas (pan, zoom, snap, pin wiring, A* routes)
-- Zustand dual-sync store (canvas, nets, sketch, sim clock, chat)
+- High-DPI SVG vector component layer (pan, zoom, 0.1" breadboard snapping, clickable inputs, A* routing)
+- Blob-URL compilation Worker that sanitizes Arduino C++ and runs it through a safe transpiler before simulation
+- Zustand dual-sync store (canvas, nets, sketch, sim clock, Pro Lab state)
 - Monaco Editor (Arduino C++)
-- AVR8js worker for compiled HEX + JS Arduino interpreter for sketches
+- AVR8js worker ready for compiled HEX + JS Arduino interpreter for sketches
 - Local rule engine + optional OpenAI copilot (`OPENAI_API_KEY`)
+
+## Pro Lab
+
+- Digital multimeter (VAC/VDC, mA, Ω, diode) with drag-and-drop probes
+- 8-channel logic analyzer / oscilloscope with port register and PWM inspection
+- I2C / SPI packet decoder
+- Thermal dissipation heatmap and magic-smoke fault effects
+- Right-click fault injection (short to GND, stuck-at-HIGH/LOW, cut wire, leaky cap)
+- ESP32 virtual network stack (Wi-Fi, HTTP, MQTT, BLE)
+- WS2812 NeoPixel ring + 8x8 matrix visualizer
+- Web Audio buzzer / piezo speaker sound synthesis
+- Library manager with auto-include resolution
+- GitHub embed snippet + Gerber / STL export
+- BroadcastChannel multiplayer room, lesson creator, and custom SVG component creator
 
 ## Develop
 

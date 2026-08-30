@@ -12,7 +12,7 @@ export function BottomPanel() {
   return (
     <div className="flex shrink-0 flex-col border-t border-white/5 bg-[#0d1118]" style={{ height: open ? h : 32 }}>
       <div className="flex h-8 items-center gap-1 px-2">
-        {(["serial", "plotter", "scope"] as const).map((t) => (
+        {(["serial", "plotter", "scope", "dmm", "decoder", "faults"] as const).map((t) => (
           <button
             key={t}
             onClick={() => {
@@ -21,7 +21,7 @@ export function BottomPanel() {
             }}
             className={`rounded px-2 py-0.5 text-[11px] ${tab === t && open ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"}`}
           >
-            {t === "serial" ? "Serial Monitor" : t === "plotter" ? "Serial Plotter" : "Oscilloscope / Logic Analyzer"}
+            {t === "serial" ? "Serial Monitor" : t === "plotter" ? "Serial Plotter" : t === "scope" ? "Logic Analyzer" : t === "dmm" ? "DMM" : t === "decoder" ? "I2C/SPI Decoder" : "Faults"}
           </button>
         ))}
         <div className="flex-1" />
@@ -37,6 +37,9 @@ export function BottomPanel() {
           {tab === "serial" && <SerialMonitor />}
           {tab === "plotter" && <SerialPlotter />}
           {tab === "scope" && <Oscilloscope />}
+          {tab === "dmm" && <DmmStrip />}
+          {tab === "decoder" && <DecoderStrip />}
+          {tab === "faults" && <FaultsStrip />}
         </div>
       )}
     </div>
@@ -140,9 +143,10 @@ function Oscilloscope() {
   return (
     <div className="h-full p-2">
       <div className="mb-1 flex gap-2 px-1 text-[10px] text-slate-400">
-        Digital timing for pins {pins.join(", ")} (PWM / GPIO)
+        Channel timing for pins {pins.join(", ")} · time base 1 ms/div · trigger 2.5 V
       </div>
       <svg viewBox={`0 0 ${w} ${h}`} className="h-[120px] w-full bg-[#05070b]">
+        <line x1={0} x2={w} y1={h / 2} y2={h / 2} stroke="#1e293b" strokeWidth={1} />
         {pins.map((pin, row) => {
           const key = `D${pin}`;
           const y0 = 20 + row * 50;
@@ -160,10 +164,73 @@ function Oscilloscope() {
                 D{pin}
               </text>
               <path d={d} fill="none" stroke="#4ade80" strokeWidth="1.4" />
+              <circle cx={w - 4} cy={y0 - 8} r={2} fill="#22d3ee" />
             </g>
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+function DmmStrip() {
+  const dmm = useWorkspace((s) => s.pro.dmm);
+  const components = useWorkspace((s) => s.components);
+  const probeLabel = (ref: { componentId: string; pinId: string } | null) => {
+    if (!ref) return "—";
+    const c = components.find((x) => x.id === ref.componentId);
+    return `${c?.label ?? "?"}.${ref.pinId}`;
+  };
+  return (
+    <div className="flex h-full items-center gap-4 px-4 text-[11px]">
+      <button
+        className="rounded-md bg-emerald-500/20 px-2 py-1 text-emerald-200 hover:bg-emerald-500/30"
+        onClick={() => useWorkspace.getState().toggleDmm()}
+      >
+        {dmm.active ? "Probes Armed" : "Arm DMM"}
+      </button>
+      <div className="flex gap-1">
+        {(["vdc", "vac", "ma", "ohm", "diode"] as const).map((m) => (
+          <button key={m} className={`rounded px-1.5 py-1 ${dmm.mode === m ? "bg-cyan-500/20 text-cyan-200" : "bg-white/5 text-slate-400"}`} onClick={() => useWorkspace.getState().setDmm({ mode: m })}>
+            {m.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <div className="font-mono text-xl font-bold text-emerald-300">{dmm.value}</div>
+      <div className="text-slate-400">Red <span className="text-slate-200">{probeLabel(dmm.probeRed)}</span> · Black <span className="text-slate-200">{probeLabel(dmm.probeBlack)}</span></div>
+    </div>
+  );
+}
+
+function DecoderStrip() {
+  const packets = useWorkspace((s) => s.pro.decoder);
+  return (
+    <div className="h-full overflow-auto px-3 py-2 font-mono text-[11px]">
+      {packets.slice(-30).reverse().map((p) => (
+        <div key={p.id} className="flex gap-2 py-0.5">
+          <span className="text-cyan-400">{p.bus.toUpperCase()}</span>
+          <span className="text-amber-300">{p.address !== undefined ? `0x${p.address.toString(16).padStart(2, "0")}` : "--"}</span>
+          <span className="text-slate-400">{p.direction}</span>
+          <span className="text-emerald-300">{p.text}</span>
+        </div>
+      ))}
+      {!packets.length && <div className="text-slate-500">No I2C/SPI packets captured yet.</div>}
+    </div>
+  );
+}
+
+function FaultsStrip() {
+  const faults = useWorkspace((s) => s.pro.faults);
+  return (
+    <div className="h-full overflow-auto px-3 py-2 font-mono text-[11px]">
+      {faults.length === 0 && <div className="text-slate-500">No injected faults. Right-click a pin or wire on the canvas.</div>}
+      {faults.map((f) => (
+        <div key={f.id} className="flex items-center gap-2 py-0.5">
+          <span className="text-amber-300">{f.label}</span>
+          <span className="text-slate-500">{f.componentId ?? f.wireId}</span>
+          <button className="ml-auto text-red-300 hover:text-white" onClick={() => useWorkspace.getState().removeFault(f.id)}>clear</button>
+        </div>
+      ))}
     </div>
   );
 }

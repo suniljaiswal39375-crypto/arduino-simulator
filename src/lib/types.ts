@@ -29,8 +29,9 @@ export interface Wire {
 }
 
 export type WorkspaceMode = "breadboard" | "schematic" | "code" | "bom";
-export type BottomTab = "serial" | "plotter" | "scope";
-export type InspectorTab = "properties" | "ai";
+export type BottomTab = "serial" | "plotter" | "scope" | "dmm" | "decoder" | "faults";
+export type InspectorTab = "properties" | "ai" | "pro";
+export type ProTab = "dmm" | "scope" | "decoder" | "thermal" | "faults" | "network" | "libraries" | "multplayer" | "custom" | "lesson" | "gist";
 export type SimStatus = "idle" | "running" | "paused";
 
 export interface CircuitState {
@@ -128,4 +129,117 @@ export interface BomRow {
   total: number;
   description: string;
   connections: string;
+}
+
+/* ------------------------- VoltCraft AI Pro ------------------------- */
+
+export type PinRef = { componentId: string; pinId: string };
+
+export type FaultKind = "cut-wire" | "short-gnd" | "stuck-high" | "stuck-low" | "leaky-capacitor";
+
+export interface Fault {
+  id: string;
+  kind: FaultKind;
+  label: string;
+  componentId?: string;
+  pinId?: string;
+  wireId?: string;
+}
+
+export type DmmMode = "vdc" | "vac" | "ma" | "ohm" | "diode";
+
+export interface DmmState {
+  active: boolean;
+  mode: DmmMode;
+  probeRed: PinRef | null;
+  probeBlack: PinRef | null;
+  value: string;
+  unit?: string;
+  measuredAt: number;
+}
+
+export type ProtocolBus = "i2c" | "spi" | "uart";
+
+export interface ProtocolPacket {
+  id: string;
+  bus: ProtocolBus;
+  ts?: number;
+  address?: number;
+  direction: "write" | "read" | "rx" | "tx";
+  bytes: number[];
+  text: string;
+  raw: string;
+}
+
+export interface ThermalEntry {
+  componentId: string;
+  watts: number;
+  maxWatts: number;
+  temperature: number;
+  burned: boolean;
+}
+
+export interface SmokeEvent {
+  id: string;
+  componentId: string;
+  x: number;
+  y: number;
+  text: string;
+  ts: number;
+}
+
+export interface NetworkEvent {
+  id: string;
+  kind: "wifi" | "http" | "mqtt" | "ws" | "ble";
+  ts?: number;
+  text: string;
+}
+
+export interface LibraryItem {
+  id: string;
+  name: string;
+  author: string;
+  description: string;
+  includes: string[];
+  installed: boolean;
+}
+
+export interface LessonStep {
+  id: string;
+  title: string;
+  detail: string;
+  verify: "wire" | "code" | "run" | "manual";
+  criteria: string;
+  completed: boolean;
+}
+
+export interface CustomComponentDraft {
+  id: string;
+  type: string;
+  label: string;
+  width: number;
+  height: number;
+  svg: string;
+  pins: { id: string; name: string; type: PinType; x: number; y: number; number?: number }[];
+  script: string;
+}
+
+export interface ProState {
+  dmm: DmmState;
+  proTab: ProTab;
+  decoder: ProtocolPacket[];
+  thermal: ThermalEntry[];
+  smoke: SmokeEvent[];
+  faults: Fault[];
+  network: NetworkEvent[];
+  wifiConnected: boolean;
+  ip: string;
+  mqtt: { topic: string; payload: string }[];
+  ble: { name: string; payload: string }[];
+  libraries: LibraryItem[];
+  lessons: LessonStep[];
+  lessonActive: number;
+  customDraft: CustomComponentDraft | null;
+  multiplayer: { channel: string; peers: string[]; live: boolean };
+  compile: { busy: boolean; ok: boolean; error: string | null; compiledAt: number | null };
 }

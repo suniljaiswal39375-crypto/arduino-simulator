@@ -1,5 +1,7 @@
-import type { Component, ElectricalNet, NetNode, Wire } from "./types";
+import type { Component, ElectricalNet, Fault, NetNode, Wire } from "./types";
 import { getDef } from "./catalog";
+import { breadboardMatrix } from "./breadboard";
+import { pinWorld } from "./geometry";
 
 export function pinKey(componentId: string, pinId: string) {
   return `${componentId}:${pinId}`;
@@ -48,8 +50,45 @@ function breadboardInternalUnions(comp: Component, uf: UnionFind) {
   }
 }
 
-export function buildConductiveNets(components: Component[], wires: Wire[]): Map<string, string> {
+const KEYPAD_ROWS = ["123A", "456B", "789C", "*0#D"];
+
+function unionPinsOnBreadboard(uf: UnionFind, components: Component[]) {
+  const breadboards = components.filter((c) => c.type === "breadboard-half" || c.type === "breadboard-full");
+  if (!breadboards.length) return;
+  for (const c of components) {
+    if (c.type === "breadboard-half" || c.type === "breadboard-full") continue;
+    for (const pin of c.pins) {
+      const world = pinWorld(c, pin);
+      for (const bb of breadboards) {
+        const matrix = breadboardMatrix(bb);
+        if (!matrix) continue;
+        for (const hole of [...matrix.holes, ...matrix.topPos, ...matrix.topNeg, ...matrix.bottomPos, ...matrix.bottomNeg]) {
+          const d = Math.hypot(hole.position.x - world.x, hole.position.y - world.y);
+          if (d <= 1.5) uf.union(pinKey(c.id, pin.id), pinKey(bb.id, hole.id));
+        }
+      }
+    }
+  }
+}
+
+function unionKeypadKey(uf: UnionFind, c: Component) {
+  if (c.type !== "keypad") return;
+  const key = String(c.properties.key ?? "");
+  if (!key) return;
+  for (let r = 0; r < KEYPAD_ROWS.length; r++) {
+    const ci = KEYPAD_ROWS[r].indexOf(key[0]);
+    if (ci < 0) continue;
+    uf.union(pinKey(c.id, `R${r + 1}`), pinKey(c.id, `C${ci + 1}`));
+  }
+}
+
+export function buildConductiveNets(
+  components: Component[],
+  wires: Wire[],
+  faults: Fault[] = []
+): Map<string, string> {
   const uf = new UnionFind();
+  const faultSet = new Map(faults.map((f) => [f.id, f]));
   for (const c of components) {
     for (const pin of c.pins) uf.find(pinKey(c.id, pin.id));
     breadboardInternalUnions(c, uf);
@@ -62,10 +101,13 @@ export function buildConductiveNets(components: Component[], wires: Wire[]): Map
         if (bits & (1 << i)) uf.union(pinKey(c.id, `${i + 1}A`), pinKey(c.id, `${i + 1}B`));
       }
     }
+    unionKeypadKey(uf, c);
   }
   for (const w of wires) {
+    if (faultSet.get(w.id)?.kind === "cut-wire") continue;
     uf.union(pinKey(w.fromComponentId, w.fromPinId), pinKey(w.toComponentId, w.toPinId));
   }
+  unionPinsOnBreadboard(uf, components);
   const map = new Map<string, string>();
   for (const [k] of uf.parent) map.set(k, uf.find(k));
   return map;
@@ -105,9 +147,10 @@ export type VoltageMap = Map<string, number>;
 export function solveVoltages(
   components: Component[],
   wires: Wire[],
-  mcuPins: Record<string, { mode: string; value: number; pwmDuty: number }>
+  mcuPins: Record<string, { mode: string; value: number; pwmDuty: number }>,
+  faults: Fault[] = []
 ): { voltages: VoltageMap; shorted: boolean; nets: ElectricalNet[] } {
-  const netOf = buildConductiveNets(components, wires);
+  const netOf = buildConductiveNets(components, wires, faults);
   const nets = netsFromMap(components, netOf);
   const voltages: VoltageMap = new Map();
   let shorted = false;
@@ -121,6 +164,11 @@ export function solveVoltages(
       if (!comp) continue;
       const pin = comp.pins.find((p) => p.id === n.pinId);
       if (!pin) continue;
+      const f = faults.find((x) => x.componentId === n.componentId && x.pinId === n.pinId);
+      if (f?.kind === "short-gnd") gnd = true;
+      if (f?.kind === "stuck-high") forced = 5;
+      if (f?.kind === "stuck-low") forced = 0;
+      if (f?.kind === "leaky-capacitor" && forced === null) forced = 2.5;
       if (pin.type === "gnd" || pin.name.startsWith("GND") || pin.name === "VSS") gnd = true;
       if (["5V", "VCC", "VDD", "VIN", "12V"].includes(pin.name)) vcc = true;
       if (pin.name === "3V3") {
