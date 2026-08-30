@@ -1,5 +1,12 @@
-import type { CatalogItem, Component, Pin } from "./types";
+import type { CatalogItem, Component, Pin, PinType } from "./types";
 import { uid } from "./utils";
+import { BUILTIN_COMPONENTS } from "./components/builtin";
+
+function legacyPinType(type: string): PinType {
+  if (type === "i2c" || type === "spi" || type === "uart") return "data";
+  if (type === "passive") return "digital";
+  return type as PinType;
+}
 
 function p(
   name: string,
@@ -8,7 +15,8 @@ function p(
   y: number,
   number?: number
 ): Omit<Pin, "id"> {
-  return { name, type, position: { x, y }, number };
+  // Ratios are normalized once the owning catalog item's dimensions are known.
+  return { name, type, position: { x, y }, xPct: x, yPct: y, number };
 }
 
 const unoRight = [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
@@ -665,6 +673,37 @@ export const CATEGORIES = [
   "Prototyping",
 ];
 
+// Adapt plugin schemas into the legacy palette API while the rest of the UI
+// migrates. Runtime schemas remain the source of truth and can be registered by
+// external packages without adding a canvas switch case.
+const existingTypes = new Set(CATALOG.map((item) => item.type));
+for (const schema of BUILTIN_COMPONENTS) {
+  if (existingTypes.has(schema.id)) continue;
+  CATALOG.push({
+    type: schema.id,
+    label: schema.name,
+    category: schema.category === "Board" ? "Microcontrollers" : schema.category === "Display" ? "Displays" : schema.category === "Sensor" ? "Sensors" : schema.category === "Actuator" || schema.category === "Audio" ? "Actuators & Outputs" : schema.category === "Input" ? "Inputs & Switches" : "Prototyping",
+    description: schema.description,
+    width: schema.dimensions.width,
+    height: schema.dimensions.height,
+    cost: schema.unitCost ?? 1,
+    pins: schema.pins.map((pin) => ({ name: pin.label, type: legacyPinType(pin.type), number: pin.number, xPct: pin.xPct, yPct: pin.yPct, position: { x: pin.xPct * schema.dimensions.width, y: pin.yPct * schema.dimensions.height } })),
+    properties: Object.entries(schema.properties).map(([key, prop]) => ({ key, label: key, kind: prop.type === "enum" ? "select" : prop.type === "string" ? "text" : prop.type, default: prop.default, unit: prop.unit, min: prop.min, max: prop.max, step: prop.step, options: prop.options?.map((value) => ({ value, label: value })) })),
+    tags: schema.tags ?? [],
+    accent: "#38bdf8",
+  });
+}
+
+// Materialize scale-invariant anchors on every catalog definition. Existing
+// `position` values remain solely for backwards-compatible project exports.
+for (const item of CATALOG) {
+  item.pins = item.pins.map((pin) => ({
+    ...pin,
+    xPct: pin.position.x / item.width,
+    yPct: pin.position.y / item.height,
+  }));
+}
+
 export const CATALOG_MAP = Object.fromEntries(CATALOG.map((c) => [c.type, c]));
 
 export const WIRE_COLORS = [
@@ -717,6 +756,8 @@ export function generateBreadboardPins(full: boolean): Pin[] {
         name,
         type: rail.prefix.endsWith("N") ? "gnd" : "power",
         position: { x, y: rail.y },
+        xPct: x / 332,
+        yPct: rail.y / (full ? 392 : 224),
       });
     }
   }
@@ -732,6 +773,8 @@ export function generateBreadboardPins(full: boolean): Pin[] {
         name,
         type: "digital",
         position: { x, y },
+        xPct: x / 332,
+        yPct: y / (full ? 392 : 224),
       });
     }
   }

@@ -14,6 +14,7 @@ import type {
   Component,
   DmmState,
   Diagnostic,
+  EnterpriseState,
   Fault,
   HistorySnapshot,
   InspectorTab,
@@ -89,7 +90,14 @@ interface WorkspaceStore {
   scopePins: number[];
   shorted: boolean;
   pro: ProState;
+  enterprise: EnterpriseState;
 
+  setEnvironment: (patch: Partial<EnterpriseState["environment"]>) => void;
+  setToleranceDrift: (enabled: boolean) => void;
+  setBatteryHealth: (id: string, value: EnterpriseState["batteryHealth"][string]) => void;
+  setMqttTopic: (topic: string, payload: string) => void;
+  setCodeCoverage: (coverage: Record<number, number>) => void;
+  set3dView: (active: boolean) => void;
   setProjectName: (n: string) => void;
   setProTab: (t: ProTab) => void;
   setDmm: (patch: Partial<DmmState>) => void;
@@ -184,6 +192,18 @@ function snapshot(s: { components: Component[]; wires: Wire[]; code: string }): 
 
 const demo = createDemoCircuit();
 
+function defaultEnterprise(): EnterpriseState {
+  return {
+    environment: { temperatureC: 25, ambientLux: 500, pressureHpa: 1013.25 },
+    toleranceDriftEnabled: false,
+    batteryHealth: {},
+    network: { mcuNodes: [], mqttBroker: { active: true, topics: {} }, dashboardWidgets: [] },
+    diagnostics: { freeRtosTasks: [], codeCoverage: {} },
+    sourcing: [],
+    is3dViewActive: false,
+  };
+}
+
 function defaultPro(): ProState {
   return {
     dmm: { active: false, mode: "vdc", probeRed: null, probeBlack: null, value: "0.00", unit: "V", measuredAt: 0 },
@@ -276,7 +296,14 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => ({
   scopePins: [13, 2],
   shorted: false,
   pro: defaultPro(),
+  enterprise: defaultEnterprise(),
 
+  setEnvironment: (patch) => set((s) => ({ enterprise: { ...s.enterprise, environment: { ...s.enterprise.environment, ...patch } } })),
+  setToleranceDrift: (toleranceDriftEnabled) => set((s) => ({ enterprise: { ...s.enterprise, toleranceDriftEnabled } })),
+  setBatteryHealth: (id, value) => set((s) => ({ enterprise: { ...s.enterprise, batteryHealth: { ...s.enterprise.batteryHealth, [id]: value } } })),
+  setMqttTopic: (topic, payload) => set((s) => ({ enterprise: { ...s.enterprise, network: { ...s.enterprise.network, mqttBroker: { ...s.enterprise.network.mqttBroker, topics: { ...s.enterprise.network.mqttBroker.topics, [topic]: payload } } } } })),
+  setCodeCoverage: (codeCoverage) => set((s) => ({ enterprise: { ...s.enterprise, diagnostics: { ...s.enterprise.diagnostics, codeCoverage } } })),
+  set3dView: (is3dViewActive) => set((s) => ({ enterprise: { ...s.enterprise, is3dViewActive } })),
   setProjectName: (projectName) => set({ projectName }),
   setProTab: (proTab) => set((s) => ({ pro: { ...s.pro, proTab } })),
   setDmm: (patch) => set((s) => ({ pro: { ...s.pro, dmm: { ...s.pro.dmm, ...patch } } })),

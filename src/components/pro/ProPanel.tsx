@@ -394,7 +394,8 @@ function CustomPanel() {
   const add = () => {
     const draftPins = pins.split("\n").filter(Boolean).map((line) => {
       const [name, type, x, y] = line.split(",");
-      return { id: name, name, type: (type as "power" | "data" | "gnd" | "digital" | "analog" | "pwm") || "digital", position: { x: Number(x), y: Number(y) } };
+      const px = Number(x), py = Number(y);
+      return { id: name, name, type: (type as "power" | "data" | "gnd" | "digital" | "analog" | "pwm") || "digital", position: { x: px, y: py }, xPct: px / 56, yPct: py / 40 };
     });
     const st = useWorkspace.getState();
     st.addCustomComponent({ label, svg, width: 56, height: 40, pins: draftPins }, { x: 220, y: 260 });

@@ -1,6 +1,6 @@
-import { pinWorld } from "./geometry";
+import { componentSize, getAbsolutePinCoords, pinWorld } from "./geometry";
 import type { Component, Pin } from "./types";
-import { clamp, rotatePoint } from "./utils";
+import { clamp } from "./utils";
 
 /**
  * VoltCraft AI Pro breadboard geometry.
@@ -123,8 +123,8 @@ export function snapComponentToBreadboard(
   // The component's pins are repositioned by candidatePosition (which is the
   // proposed origin). We snap the whole group by computing one shared offset.
   const candidateWorld = (p: Pin, dx = 0, dy = 0) => {
-    const local = { x: candidatePosition.x + p.position.x + dx, y: candidatePosition.y + p.position.y + dy };
-    return rotatePoint(local, { x: candidatePosition.x + dx, y: candidatePosition.y + dy }, comp.rotation);
+    const { width, height } = componentSize(comp.type);
+    return getAbsolutePinCoords(candidatePosition.x + dx, candidatePosition.y + dy, width, height, comp.rotation, p);
   };
 
   let best: { offset: { x: number; y: number }; hole: BreadboardHole; distance: number; pin: Pin } | null = null;
