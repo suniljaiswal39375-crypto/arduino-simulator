@@ -19,6 +19,8 @@ import {
   RotateCw,
   Trash2,
   FolderOpen,
+  FlaskConical,
+  Cable,
 } from "lucide-react";
 import { useWorkspace } from "@/lib/store";
 import { pauseSimulation, startSimulation, stepSimulation, stopSimulation } from "@/lib/simulation/engine";
@@ -46,6 +48,7 @@ export function Header() {
   const gridVisible = useWorkspace((s) => s.gridVisible);
   const snapToGrid = useWorkspace((s) => s.snapToGrid);
   const shorted = useWorkspace((s) => s.shorted);
+  const compile = useWorkspace((s) => s.pro.compile);
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 overflow-x-auto border-b border-white/5 bg-[#0d1118] px-3">
@@ -150,6 +153,32 @@ export function Header() {
         </div>
       </div>
 
+      <div
+        className={`hidden items-center gap-1 rounded-md border px-2 py-1 text-[10px] md:flex ${
+          compile.ok ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-300"
+        }`}
+        title={compile.error ?? "Compilation pipeline"}
+      >
+        <FlaskConical size={11} />
+        {compile.busy ? "Compiling…" : compile.ok ? "Compiled" : compile.error ? "Compile error" : "Ready"}
+      </div>
+      <button
+        className="flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10"
+        onClick={() => {
+          useWorkspace.getState().setInspectorTab("pro");
+          useWorkspace.getState().setMode("breadboard");
+        }}
+      >
+        <Cable size={12} /> Pro Lab
+      </button>
+      <button
+        className="flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10"
+        onClick={() => void flashToHardware(useWorkspace.getState())}
+        title="WebSerial bridge — writes the current sketch to a plugged-in board"
+      >
+        <Cable size={11} /> Flash
+      </button>
+
       <ExportMenu />
       <button
         className="rounded-md bg-white/5 px-2 py-1 text-[11px] text-slate-300 hover:bg-white/10"
@@ -240,4 +269,23 @@ function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: stri
       {icon} {label}
     </button>
   );
+}
+
+async function flashToHardware(st: ReturnType<typeof useWorkspace.getState>) {
+  const serialApi = (navigator as unknown as { serial?: { requestPort?: () => Promise<{ writable?: { getWriter: () => { write: (chunk: Uint8Array) => Promise<void>; releaseLock: () => void } }; open: (o: { baudRate: number }) => Promise<void> }> } }).serial;
+  if (!serialApi?.requestPort) {
+    st.notify("error", "WebSerial is not available in this browser. Use Chrome/Edge with a physical USB device.");
+    return;
+  }
+  try {
+    const port = await serialApi.requestPort();
+    await port.open({ baudRate: 115200 });
+    const writer = port.writable!.getWriter();
+    const encoder = new TextEncoder();
+    await writer.write(encoder.encode(`/* ${st.projectName} — VoltCraft AI bridge */\n${st.code}`));
+    writer.releaseLock();
+    st.notify("info", "Sketch bytes written over WebSerial. A real avr-gcc toolchain can replace this with a .hex loader.");
+  } catch (err) {
+    st.notify("error", `WebSerial error: ${(err as Error).message}`);
+  }
 }

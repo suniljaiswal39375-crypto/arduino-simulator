@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { autoWire } from "./autowire";
 import { createComponent, createDemoCircuit, DEFAULT_SKETCH, defaultColorForPin, getDef } from "./catalog";
+import { snapComponentToBreadboard } from "./breadboard";
 import { generateSketch } from "./codegen";
 import { diagnoseCircuit } from "./diagnostics";
 import { pinWorldById } from "./geometry";
@@ -11,12 +12,22 @@ import type {
   BottomTab,
   ChatMessage,
   Component,
+  DmmState,
   Diagnostic,
+  Fault,
   HistorySnapshot,
   InspectorTab,
+  LessonStep,
+  NetworkEvent,
+  PinRef,
   PlotSample,
+  ProState,
+  ProTab,
+  ProtocolPacket,
   SerialLine,
   SimStatus,
+  SmokeEvent,
+  ThermalEntry,
   Wire,
   WorkspaceMode,
 } from "./types";
@@ -77,8 +88,30 @@ interface WorkspaceStore {
   historyIndex: number;
   scopePins: number[];
   shorted: boolean;
+  pro: ProState;
 
   setProjectName: (n: string) => void;
+  setProTab: (t: ProTab) => void;
+  setDmm: (patch: Partial<DmmState>) => void;
+  setDmmProbe: (probe: "red" | "black", ref: PinRef | null) => void;
+  toggleDmm: (active?: boolean) => void;
+  addProtocolPacket: (p: Omit<ProtocolPacket, "id">) => void;
+  clearProtocolPackets: () => void;
+  setThermal: (entries: ThermalEntry[]) => void;
+  addSmoke: (e: Omit<SmokeEvent, "id">) => void;
+  clearSmoke: () => void;
+  setFaults: (faults: Fault[]) => void;
+  addFault: (f: Fault) => void;
+  removeFault: (id: string) => void;
+  clearFaults: () => void;
+  addNetworkEvent: (e: Omit<NetworkEvent, "id">) => void;
+  setWifi: (connected: boolean, ip: string) => void;
+  addMqtt: (topic: string, payload: string) => void;
+  addBle: (name: string, payload: string) => void;
+  setLessonActive: (i: number) => void;
+  updateLesson: (id: string, completed: boolean) => void;
+  setLessons: (steps: LessonStep[]) => void;
+  setCompile: (patch: Partial<ProState["compile"]>) => void;
   setMode: (m: WorkspaceMode) => void;
   setZoom: (z: number) => void;
   setPan: (p: { x: number; y: number }) => void;
@@ -90,11 +123,14 @@ interface WorkspaceStore {
   setLeftWidth: (n: number) => void;
   setRightWidth: (n: number) => void;
   setBottomHeight: (n: number) => void;
+  setScopePins: (pins: number[]) => void;
+  toggleLibrary: (id: string) => void;
   setWireColor: (c: string) => void;
   setCode: (c: string) => void;
   select: (ids: string[], additive?: boolean) => void;
   clearSelection: () => void;
   addComponent: (type: string, position: { x: number; y: number }) => Component;
+  addCustomComponent: (draft: { label: string; svg: string; width: number; height: number; pins: Component["pins"]; properties?: Record<string, unknown> }, position: { x: number; y: number }) => Component;
   moveComponent: (id: string, position: { x: number; y: number }) => void;
   rotateSelected: () => void;
   updateProps: (id: string, patch: Record<string, unknown>) => void;
@@ -148,6 +184,50 @@ function snapshot(s: { components: Component[]; wires: Wire[]; code: string }): 
 
 const demo = createDemoCircuit();
 
+function defaultPro(): ProState {
+  return {
+    dmm: { active: false, mode: "vdc", probeRed: null, probeBlack: null, value: "0.00", unit: "V", measuredAt: 0 },
+    proTab: "dmm",
+    decoder: [],
+    thermal: [],
+    smoke: [],
+    faults: [],
+    network: [],
+    wifiConnected: false,
+    ip: "192.168.4.1",
+    mqtt: [],
+    ble: [],
+    libraries: [
+      { id: "fastled", name: "FastLED", author: "Daniel Garcia", description: "Addressable LED library for WS2812/NeoPixel strips and matrices.", includes: ["FastLED.h"], installed: false },
+      { id: "adafruit-neopixel", name: "Adafruit NeoPixel", author: "Adafruit", description: "WS2812/WS2812B NeoPixel driver.", includes: ["Adafruit_NeoPixel.h"], installed: false },
+      { id: "liquidcrystal", name: "LiquidCrystal", author: "Arduino", description: "HD44780 character LCD driver.", includes: ["LiquidCrystal.h"], installed: true },
+      { id: "dht", name: "DHT sensor library", author: "Adafruit", description: "DHT11/DHT22 temperature & humidity driver.", includes: ["DHT.h"], installed: false },
+      { id: "esp32-wifi", name: "ESP32 WiFi / MQTT", author: "Espressif", description: "Wi-Fi, MQTT, WebSocket and BLE APIs for ESP32 sketches.", includes: ["WiFi.h", "PubSubClient.h", "BLEDevice.h"], installed: false },
+    ],
+    lessons: defaultLessons(),
+    lessonActive: 0,
+    customDraft: null,
+    multiplayer: { channel: "voltcraft-room", peers: [], live: false },
+    compile: { busy: false, ok: false, error: null, compiledAt: null },
+  };
+}
+
+function addIncludes(code: string, includes: string[]) {
+  const lines = includes.map((i) => `#include <${i}>`).join("\n");
+  if (!/^#include/m.test(code)) return lines + "\n" + code;
+  const idx = code.search(/^#include/m);
+  return code.slice(0, idx) + lines + "\n" + code.slice(idx);
+}
+
+function defaultLessons(): LessonStep[] {
+  return [
+    { id: "step-1", title: "Place the Uno", detail: "Drag an Arduino Uno from the catalog onto the breadboard.", verify: "wire", criteria: "components:arduino-uno", completed: false },
+    { id: "step-2", title: "Add an LED and resistor", detail: "Add a red LED and a 220 Ω resistor next to pin 13.", verify: "wire", criteria: "components:led-red+resistor", completed: false },
+    { id: "step-3", title: "Wire pin 13 → resistor → LED", detail: "Click pin 13 then resistor pin 1, then resistor pin 2 to LED anode.", verify: "wire", criteria: "wire:13->resistor->led", completed: false },
+    { id: "step-4", title: "Run the Blink sketch", detail: "Press Play Simulation and confirm the LED blinks.", verify: "run", criteria: "sim:running", completed: false },
+  ];
+}
+
 export const useWorkspace = create<WorkspaceStore>((set, get) => ({
   projectName: "Blink Demo",
   components: demo.components,
@@ -195,8 +275,37 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => ({
   historyIndex: 0,
   scopePins: [13, 2],
   shorted: false,
+  pro: defaultPro(),
 
   setProjectName: (projectName) => set({ projectName }),
+  setProTab: (proTab) => set((s) => ({ pro: { ...s.pro, proTab } })),
+  setDmm: (patch) => set((s) => ({ pro: { ...s.pro, dmm: { ...s.pro.dmm, ...patch } } })),
+  setDmmProbe: (probe, ref) =>
+    set((s) => ({
+      pro: { ...s.pro, dmm: { ...s.pro.dmm, [probe === "red" ? "probeRed" : "probeBlack"]: ref } },
+    })),
+  toggleDmm: (active) =>
+    set((s) => ({ pro: { ...s.pro, dmm: { ...s.pro.dmm, active: active ?? !s.pro.dmm.active } } })),
+  addProtocolPacket: (p) =>
+    set((s) => ({ pro: { ...s.pro, decoder: [...s.pro.decoder, { ...p, id: uid("pkt"), ts: p.ts ?? Date.now() }].slice(-300) } })),
+  clearProtocolPackets: () => set((s) => ({ pro: { ...s.pro, decoder: [] } })),
+  setThermal: (entries) => set((s) => ({ pro: { ...s.pro, thermal: entries } })),
+  addSmoke: (e) => set((s) => ({ pro: { ...s.pro, smoke: [...s.pro.smoke, { ...e, id: uid("smoke") }].slice(-40) } })),
+  clearSmoke: () => set((s) => ({ pro: { ...s.pro, smoke: [] } })),
+  setFaults: (faults) => set((s) => ({ pro: { ...s.pro, faults } })),
+  addFault: (f) => set((s) => ({ pro: { ...s.pro, faults: [...s.pro.faults, f] } })),
+  removeFault: (id) => set((s) => ({ pro: { ...s.pro, faults: s.pro.faults.filter((f) => f.id !== id) } })),
+  clearFaults: () => set((s) => ({ pro: { ...s.pro, faults: [] } })),
+  addNetworkEvent: (e) =>
+    set((s) => ({ pro: { ...s.pro, network: [...s.pro.network, { ...e, id: uid("net"), ts: e.ts ?? Date.now() }].slice(-200) } })),
+  setWifi: (wifiConnected, ip) => set((s) => ({ pro: { ...s.pro, wifiConnected, ip } })),
+  addMqtt: (topic, payload) => set((s) => ({ pro: { ...s.pro, mqtt: [...s.pro.mqtt, { topic, payload }].slice(-50) } })),
+  addBle: (name, payload) => set((s) => ({ pro: { ...s.pro, ble: [...s.pro.ble, { name, payload }].slice(-50) } })),
+  setLessonActive: (lessonActive) => set((s) => ({ pro: { ...s.pro, lessonActive } })),
+  updateLesson: (id, completed) =>
+    set((s) => ({ pro: { ...s.pro, lessons: s.pro.lessons.map((l) => (l.id === id ? { ...l, completed } : l)) } })),
+  setLessons: (lessons) => set((s) => ({ pro: { ...s.pro, lessons } })),
+  setCompile: (patch) => set((s) => ({ pro: { ...s.pro, compile: { ...s.pro.compile, ...patch } } })),
   setMode: (mode) => set({ mode }),
   setZoom: (zoom) => set({ zoom: Math.min(3, Math.max(0.25, zoom)) }),
   setPan: (pan) => set({ pan }),
@@ -208,6 +317,17 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => ({
   setLeftWidth: (leftWidth) => set({ leftWidth }),
   setRightWidth: (rightWidth) => set({ rightWidth }),
   setBottomHeight: (bottomHeight) => set({ bottomHeight }),
+  setScopePins: (scopePins) => set({ scopePins }),
+  toggleLibrary: (id) =>
+    set((s) => {
+      const lib = s.pro.libraries.find((l) => l.id === id);
+      if (!lib) return {};
+      const code = lib.installed ? s.code : addIncludes(s.code, lib.includes);
+      return {
+        code,
+        pro: { ...s.pro, libraries: s.pro.libraries.map((l) => (l.id === id ? { ...l, installed: !l.installed } : l)) },
+      };
+    }),
   setWireColor: (wireColor) => set({ wireColor }),
   setCode: (code) => set({ code }),
   select: (ids, additive) =>
@@ -223,12 +343,38 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => ({
     return c;
   },
 
+  addCustomComponent: (draft, position) => {
+    get().pushHistory();
+    const id = uid("custom");
+    const c: Component = {
+      id,
+      type: `custom-${id}`,
+      label: draft.label,
+      position,
+      rotation: 0,
+      pins: draft.pins,
+      properties: {
+        svg: draft.svg,
+        width: draft.width,
+        height: draft.height,
+        ...(draft.properties ?? {}),
+      },
+    };
+    set((s) => ({ components: [...s.components, c], selectedIds: [c.id] }));
+    return c;
+  },
+
   moveComponent: (id, position) => {
-    set((s) => ({
-      components: s.components.map((c) =>
-        c.id === id ? { ...c, position: s.snapToGrid ? { x: snap(position.x), y: snap(position.y) } : position } : c
-      ),
-    }));
+    set((s) => {
+      const c = s.components.find((x) => x.id === id);
+      if (!c) return {};
+      let pos = position;
+      if (s.snapToGrid) {
+        const bb = snapComponentToBreadboard(c, position, s.components);
+        pos = bb.snappedTo ? bb.position : { x: snap(position.x), y: snap(position.y) };
+      }
+      return { components: s.components.map((x) => (x.id === id ? { ...x, position: pos } : x)) };
+    });
   },
 
   rotateSelected: () => {
