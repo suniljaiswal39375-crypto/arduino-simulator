@@ -9,7 +9,6 @@ let paused = false;
 let startedAt = 0;
 let simOffset = 0;
 let raf = 0;
-let loopPromise: Promise<void> | null = null;
 let frames = 0;
 let lastFpsAt = 0;
 
@@ -136,7 +135,7 @@ export async function startSimulation() {
   };
   raf = requestAnimationFrame(tickUi);
 
-  loopPromise = runSketch(store.code, api)
+  runSketch(store.code, api)
     .catch((err) => {
       useWorkspace.getState().appendSerial(`Firmware error: ${(err as Error).message}`, "sys");
       useWorkspace.getState().notify("error", (err as Error).message);

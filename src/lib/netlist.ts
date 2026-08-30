@@ -86,7 +86,6 @@ export function netsFromMap(
     }
   }
   const nets: ElectricalNet[] = [];
-  let i = 0;
   for (const [id, nodes] of groups) {
     const labels: string[] = [];
     for (const n of nodes) {
@@ -97,7 +96,6 @@ export function netsFromMap(
       if (pin?.name === "3V3") labels.push("3V3");
     }
     nets.push({ id, nodes, voltage: 0, labels: [...new Set(labels)] });
-    i++;
   }
   return nets;
 }
