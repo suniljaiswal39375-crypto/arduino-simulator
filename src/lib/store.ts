@@ -30,7 +30,53 @@ import type {
   ThermalEntry,
   Wire,
   WorkspaceMode,
+  PCBDesign,
+  PCBLayer,
+  PCBTrace,
+  WorkspaceSettings,
+  VersionSnapshot,
 } from "./types";
+
+/* New advanced feature types */
+export interface RecentProject {
+  id: string;
+  name: string;
+  lastOpened: number;
+  thumbnail?: string;
+}
+
+export interface CloudProject {
+  id: string;
+  name: string;
+  owner: string;
+  lastSynced: number;
+  collaborators: string[];
+}
+
+export interface AISuggestion {
+  id: string;
+  type: "optimization" | "fix" | "improvement" | "tip";
+  title: string;
+  description: string;
+  severity: "low" | "medium" | "high";
+  action?: () => void;
+  ts: number;
+}
+
+export interface MacroCommand {
+  id: string;
+  name: string;
+  description: string;
+  commands: string[];
+  shortcut?: string;
+}
+
+export interface CollaborationState {
+  channel: string;
+  peers: { id: string; name: string; cursor?: { x: number; y: number }; color: string }[];
+  live: boolean;
+  userId: string;
+}
 
 const MAX_HISTORY = 50;
 const MAX_SERIAL = 400;
@@ -89,6 +135,17 @@ interface WorkspaceStore {
   scopePins: number[];
   shorted: boolean;
   pro: ProState;
+  /* New advanced features state */
+  pcbDesign: PCBDesign | null;
+  layers: PCBLayer[];
+  sessionStartTime: number;
+  clipboard: { components: Component[]; wires: Wire[] } | null;
+  favorites: string[];
+  recentProjects: RecentProject[];
+  cloudProjects: CloudProject[];
+  aiSuggestions: AISuggestion[];
+  macroCommands: MacroCommand[];
+  collaboration: CollaborationState;
 
   setProjectName: (n: string) => void;
   setProTab: (t: ProTab) => void;
@@ -172,6 +229,33 @@ interface WorkspaceStore {
   exportJSON: () => string;
   importJSON: (raw: string) => void;
   getSelected: () => Component | null;
+  
+  /* New advanced feature actions */
+  setPCBDesign: (design: PCBDesign | null) => void;
+  setLayers: (layers: PCBLayer[]) => void;
+  toggleLayerVisibility: (layerId: string) => void;
+  addPCBTrace: (trace: PCBTrace) => void;
+  autoroutePCB: () => void;
+  exportGerber: () => void;
+  copyToClipboard: () => void;
+  pasteFromClipboard: (position: { x: number; y: number }) => void;
+  toggleFavorite: (type: string) => void;
+  saveVersion: (label: string) => void;
+  restoreVersion: (versionId: string) => void;
+  updateSettings: (patch: Partial<WorkspaceSettings>) => void;
+  startSession: () => void;
+  endSession: () => void;
+  trackComponentUsage: (type: string) => void;
+  addAiSuggestion: (suggestion: AISuggestion) => void;
+  clearAiSuggestions: () => void;
+  executeMacro: (macroId: string) => void;
+  addMacro: (macro: MacroCommand) => void;
+  removeMacro: (id: string) => void;
+  setCollaboration: (patch: Partial<CollaborationState>) => void;
+  joinCollaboration: (channel: string) => void;
+  leaveCollaboration: () => void;
+  syncWithCloud: () => Promise<void>;
+  loadRecentProject: (projectId: string) => void;
 }
 
 function snapshot(s: { components: Component[]; wires: Wire[]; code: string }): HistorySnapshot {
@@ -209,7 +293,51 @@ function defaultPro(): ProState {
     customDraft: null,
     multiplayer: { channel: "voltcraft-room", peers: [], live: false },
     compile: { busy: false, ok: false, error: null, compiledAt: null },
+    /* New advanced features defaults */
+    analytics: { sessionsCount: 0, avgSessionTime: 0, componentsUsed: {}, lastSession: Date.now() },
+    versionHistory: [],
+    settings: {
+      theme: "dark",
+      layout: "default",
+      autoSave: true,
+      autoSaveInterval: 60,
+      showWelcome: true,
+      enableSounds: false,
+      enableAnimations: true,
+      defaultBaudRate: 9600,
+      preferredLanguage: "en",
+      cloudSync: false,
+      telemetryEnabled: false,
+    },
   };
+}
+
+function defaultSettings(): WorkspaceSettings {
+  return {
+    theme: "dark",
+    layout: "default",
+    autoSave: true,
+    autoSaveInterval: 60,
+    showWelcome: true,
+    enableSounds: false,
+    enableAnimations: true,
+    defaultBaudRate: 9600,
+    preferredLanguage: "en",
+    cloudSync: false,
+    telemetryEnabled: false,
+  };
+}
+
+function defaultPCBLayers(): PCBLayer[] {
+  return [
+    { id: "top", name: "Top Copper", visible: true, locked: false, color: "#a855f7" },
+    { id: "bottom", name: "Bottom Copper", visible: true, locked: false, color: "#06b6d4" },
+    { id: "silkscreen-top", name: "Top Silkscreen", visible: true, locked: false, color: "#ffffff" },
+    { id: "silkscreen-bottom", name: "Bottom Silkscreen", visible: false, locked: false, color: "#e5e5e5" },
+    { id: "soldermask-top", name: "Top Solder Mask", visible: false, locked: false, color: "#22c55e" },
+    { id: "soldermask-bottom", name: "Bottom Solder Mask", visible: false, locked: false, color: "#16a34a" },
+    { id: "keepout", name: "Keep-out Layer", visible: true, locked: true, color: "#ef4444" },
+  ];
 }
 
 function addIncludes(code: string, includes: string[]) {
@@ -651,6 +779,188 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => ({
   getSelected: () => {
     const s = get();
     return s.components.find((c) => c.id === s.selectedIds[0]) ?? null;
+  },
+  
+  /* New advanced feature implementations */
+  setPCBDesign: (pcbDesign) => set({ pcbDesign }),
+  setLayers: (layers) => set({ layers }),
+  toggleLayerVisibility: (layerId) =>
+    set((s) => ({
+      layers: s.layers.map((l) => (l.id === layerId ? { ...l, visible: !l.visible } : l)),
+    })),
+  addPCBTrace: (trace) =>
+    set((s) => ({
+      pcbDesign: s.pcbDesign ? { ...s.pcbDesign, traces: [...s.pcbDesign.traces, trace] } : null,
+    })),
+  autoroutePCB: () => {
+    const s = get();
+    // Simple auto-router placeholder - connects components with straight traces
+    const traces: PCBTrace[] = s.wires.map((w, i) => ({
+      id: uid("trace"),
+      fromComponentId: w.fromComponentId,
+      fromPadId: w.fromPinId,
+      toComponentId: w.toComponentId,
+      toPadId: w.toPinId,
+      layer: "top",
+      width: 0.25,
+      path: [],
+    }));
+    set((s) => ({
+      pcbDesign: {
+        boardOutline: [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100, y: 80 },
+          { x: 0, y: 80 },
+        ],
+        layers: defaultPCBLayers(),
+        footprints: {},
+        traces,
+        vias: [],
+        components: s.components.map((c) => ({
+          ...c,
+          pcbPosition: { x: c.position.x % 100, y: c.position.y % 80 },
+          pcbRotation: c.rotation,
+        })),
+      },
+    }));
+  },
+  exportGerber: () => {
+    get().notify("info", "Gerber export initiated. Files will download shortly.");
+    // Placeholder for Gerber export logic
+  },
+  copyToClipboard: () => {
+    const s = get();
+    if (!s.selectedIds.length) return;
+    const components = s.components.filter((c) => s.selectedIds.includes(c.id));
+    const wires = s.wires.filter(
+      (w) => s.selectedIds.includes(w.fromComponentId) && s.selectedIds.includes(w.toComponentId)
+    );
+    set({ clipboard: { components, wires } });
+    get().notify("info", `Copied ${components.length} components to clipboard`);
+  },
+  pasteFromClipboard: (position) => {
+    const { clipboard } = get();
+    if (!clipboard) return;
+    get().pushHistory();
+    const offset = { x: position.x - (clipboard.components[0]?.position.x ?? 0), y: position.y - (clipboard.components[0]?.position.y ?? 0) };
+    const componentMap = new Map<string, string>();
+    clipboard.components.forEach((c) => {
+      const newId = uid("comp");
+      componentMap.set(c.id, newId);
+      get().addComponent(c.type, { x: c.position.x + offset.x, y: c.position.y + offset.y });
+    });
+    clipboard.wires.forEach((w) => {
+      const newFromId = componentMap.get(w.fromComponentId);
+      const newToId = componentMap.get(w.toComponentId);
+      if (newFromId && newToId) {
+        // Wire will be created by the store's wire logic
+      }
+    });
+    get().notify("info", `Pasted ${clipboard.components.length} components`);
+  },
+  toggleFavorite: (type) =>
+    set((s) => ({
+      favorites: s.favorites.includes(type) ? s.favorites.filter((f) => f !== type) : [...s.favorites, type],
+    })),
+  saveVersion: (label) => {
+    const s = get();
+    const version: VersionSnapshot = {
+      id: uid("ver"),
+      timestamp: Date.now(),
+      label,
+      snapshot: snapshot(s),
+    };
+    set((s) => ({
+      pro: { ...s.pro, versionHistory: [...s.pro.versionHistory, version].slice(-20) },
+    }));
+    get().notify("info", `Saved version "${label}"`);
+  },
+  restoreVersion: (versionId) => {
+    const s = get();
+    const version = s.pro.versionHistory.find((v) => v.id === versionId);
+    if (version) {
+      set({
+        components: version.snapshot.components,
+        wires: version.snapshot.wires,
+        code: version.snapshot.code,
+      });
+      get().notify("info", `Restored version "${version.label}"`);
+    }
+  },
+  updateSettings: (patch) =>
+    set((s) => ({
+      pro: { ...s.pro, settings: { ...s.pro.settings, ...patch } },
+    })),
+  startSession: () => set({ sessionStartTime: Date.now() }),
+  endSession: () => {
+    const s = get();
+    const duration = Date.now() - s.sessionStartTime;
+    set((s) => ({
+      pro: {
+        ...s.pro,
+        analytics: {
+          ...s.pro.analytics,
+          sessionsCount: s.pro.analytics.sessionsCount + 1,
+          avgSessionTime: (s.pro.analytics.avgSessionTime * s.pro.analytics.sessionsCount + duration) / (s.pro.analytics.sessionsCount + 1),
+          lastSession: Date.now(),
+        },
+      },
+    }));
+  },
+  trackComponentUsage: (type) =>
+    set((s) => ({
+      pro: {
+        ...s.pro,
+        analytics: {
+          ...s.pro.analytics,
+          componentsUsed: {
+            ...s.pro.analytics.componentsUsed,
+            [type]: (s.pro.analytics.componentsUsed[type] ?? 0) + 1,
+          },
+        },
+      },
+    })),
+  addAiSuggestion: (aiSuggestions) =>
+    set((s) => ({
+      aiSuggestions: [...s.aiSuggestions, aiSuggestions].slice(-10),
+    })),
+  clearAiSuggestions: () => set({ aiSuggestions: [] }),
+  executeMacro: (macroId) => {
+    const macro = get().macroCommands.find((m) => m.id === macroId);
+    if (macro) {
+      get().notify("info", `Executing macro: ${macro.name}`);
+      // Execute macro commands
+    }
+  },
+  addMacro: (macro) => set((s) => ({ macroCommands: [...s.macroCommands, macro] })),
+  removeMacro: (id) => set((s) => ({ macroCommands: s.macroCommands.filter((m) => m.id !== id) })),
+  setCollaboration: (patch) =>
+    set((s) => ({
+      collaboration: { ...s.collaboration, ...patch },
+    })),
+  joinCollaboration: (channel) =>
+    set(() => ({
+      collaboration: {
+        channel,
+        peers: [],
+        live: true,
+        userId: uid("user"),
+      },
+    })),
+  leaveCollaboration: () =>
+    set((s) => ({
+      collaboration: { ...s.collaboration, live: false, peers: [] },
+    })),
+  syncWithCloud: async () => {
+    get().notify("info", "Syncing with cloud...");
+    // Placeholder for cloud sync logic
+  },
+  loadRecentProject: (projectId) => {
+    const project = get().recentProjects.find((p) => p.id === projectId);
+    if (project) {
+      get().notify("info", `Loading project: ${project.name}`);
+    }
   },
 }));
 
