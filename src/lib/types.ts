@@ -8,6 +8,40 @@ export interface Pin {
   number?: number;
 }
 
+export interface PCBLayer {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  color: string;
+}
+
+export interface PCBTrace {
+  id: string;
+  fromComponentId: string;
+  fromPadId: string;
+  toComponentId: string;
+  toPadId: string;
+  layer: string;
+  width: number;
+  path: { x: number; y: number }[];
+}
+
+export interface ComponentFootprint {
+  pads: { id: string; x: number; y: number; rotation: number; shape: "round" | "square" | "oval"; drill: number }[];
+  silkscreen: { type: "rect" | "circle" | "line" | "text"; data: unknown }[];
+  courtyard: { x: number; y: number }[];
+}
+
+export interface PCBDesign {
+  boardOutline: { x: number; y: number }[];
+  layers: PCBLayer[];
+  footprints: Record<string, ComponentFootprint>;
+  traces: PCBTrace[];
+  vias: { x: number; y: number; diameter: number }[];
+  components: (Component & { footprint?: string; pcbPosition?: { x: number; y: number }; pcbRotation?: number })[];
+}
+
 export interface Component {
   id: string;
   type: string;
@@ -28,11 +62,13 @@ export interface Wire {
   waypoints?: { x: number; y: number }[];
 }
 
-export type WorkspaceMode = "breadboard" | "schematic" | "code" | "bom";
-export type BottomTab = "serial" | "plotter" | "scope" | "dmm" | "decoder" | "faults";
-export type InspectorTab = "properties" | "ai" | "pro";
-export type ProTab = "dmm" | "scope" | "decoder" | "thermal" | "faults" | "network" | "libraries" | "multplayer" | "custom" | "lesson" | "gist";
-export type SimStatus = "idle" | "running" | "paused";
+export type WorkspaceMode = "breadboard" | "schematic" | "code" | "bom" | "pcb" | "3d";
+export type BottomTab = "serial" | "plotter" | "scope" | "dmm" | "decoder" | "faults" | "terminal" | "console";
+export type InspectorTab = "properties" | "ai" | "pro" | "layers" | "timeline";
+export type ProTab = "dmm" | "scope" | "decoder" | "thermal" | "faults" | "network" | "libraries" | "multplayer" | "custom" | "lesson" | "gist" | "analytics" | "version" | "settings";
+export type SimStatus = "idle" | "running" | "paused" | "compiling";
+export type ThemeMode = "dark" | "light" | "auto";
+export type ViewLayout = "default" | "compact" | "expanded" | "fullscreen";
 
 export interface CircuitState {
   components: Component[];
@@ -242,4 +278,29 @@ export interface ProState {
   customDraft: CustomComponentDraft | null;
   multiplayer: { channel: string; peers: string[]; live: boolean };
   compile: { busy: boolean; ok: boolean; error: string | null; compiledAt: number | null };
+  /* New advanced features */
+  analytics: { sessionsCount: number; avgSessionTime: number; componentsUsed: Record<string, number>; lastSession: number };
+  versionHistory: VersionSnapshot[];
+  settings: WorkspaceSettings;
+}
+
+export interface VersionSnapshot {
+  id: string;
+  timestamp: number;
+  label: string;
+  snapshot: HistorySnapshot;
+}
+
+export interface WorkspaceSettings {
+  theme: ThemeMode;
+  layout: ViewLayout;
+  autoSave: boolean;
+  autoSaveInterval: number;
+  showWelcome: boolean;
+  enableSounds: boolean;
+  enableAnimations: boolean;
+  defaultBaudRate: number;
+  preferredLanguage: string;
+  cloudSync: boolean;
+  telemetryEnabled: boolean;
 }
